@@ -197,7 +197,7 @@ namespace SerialPortSend
                 {
                     if(receive[1] == 0x01)
                     {
-                        this.curSP.Style.BackColor = Color.LightBlue;
+                        this.curSP.Style.BackColor = Color.Blue;
                     }
                     if(receive[2] == 0x00)
                     {
