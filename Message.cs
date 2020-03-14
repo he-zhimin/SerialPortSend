@@ -56,7 +56,8 @@ namespace SerialPortSend
         static private byte[] transByte(byte[] data)
         {
             List<byte> temp = new List<byte>();
-            for (int i = 0; i < data.Length - 1; i++)
+            temp.Add(data[0]);
+            for (int i = 1; i < data.Length - 1; i++)
             {
                 if (data[i] == 0xc0)
                 {
@@ -74,6 +75,7 @@ namespace SerialPortSend
                 }
 
             }
+            temp.Add(data[data.Length - 1]);
             return temp.ToArray();
         }
         static public int checkReceiveData(byte[] receiveData)

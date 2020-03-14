@@ -25,6 +25,7 @@ namespace SerialPortSend
         private int type = 1;
         private int startPos = 1;
         private int curPos = 1;
+        private List<byte> receiveBuf = new List<byte>();
         public Form1()
         {
             InitializeComponent();
@@ -121,9 +122,9 @@ namespace SerialPortSend
             }
             if (curPos == fileData.Count)
             {
-                sendData = Message.getFileMessage(fileData[0], this.type, this.version, curSP.RowIndex, curSP.ColumnIndex, 0);
+                sendData = Message.getFileMessage(fileData[0], this.type, this.version, curSP.RowIndex, curSP.ColumnIndex, 0 + 1);
             }else{
-                sendData = Message.getFileMessage(fileData[curPos], this.type, this.version, curSP.RowIndex, curSP.ColumnIndex, curPos);
+                sendData = Message.getFileMessage(fileData[curPos], this.type, this.version, curSP.RowIndex, curSP.ColumnIndex, curPos + 1);
             }
             this.serialPort1.Write(sendData, 0, sendData.Length);
             curPos += 1;
@@ -159,30 +160,39 @@ namespace SerialPortSend
             try
             {
                 int n = this.serialPort1.BytesToRead;
-                byte[] buf = new byte[n];
-                this.serialPort1.Read(buf, 0, n);
-                int rtype = Message.checkReceiveData(buf);
-                if (rtype == 1)
+                byte[] rbuf = new byte[n];
+                this.serialPort1.Read(rbuf, 0, n);
+                for(int i = 0; i < rbuf.Length; i++)
                 {
-                    if (buf[1] == 0x01 || buf[2] == 0x00)
+                    this.receiveBuf.Add(rbuf[i]);
+                    if (this.receiveBuf.Count != 1 && this.receiveBuf[this.receiveBuf.Count - 1] == 0xc0)
                     {
-                        this.isContinue = false;
-                    }
-                    if(this.type == 2)
-                    {
-                        sendToSp6();
-                    }
-                    else
-                    {
-                        sendFileData();
+                        byte[] buf = this.receiveBuf.ToArray();
+                        int rtype = Message.checkReceiveData(buf);
+                        if (rtype == 1)
+                        {
+                            if (buf[1] == 0x01 || buf[2] == 0x00)
+                            {
+                                this.isContinue = false;
+                            }
+                            if(this.type == 2)
+                            {
+                                sendToSp6();
+                            }
+                            else
+                            {
+                                sendFileData();
+                            }
+                        }
+                        else if(rtype == 2)
+                        {
+                            byte[] result = Message.getSP6SelfCheckMessage();
+                            this.serialPort1.Write(result, 0, result.Length);
+                        }
+                        this.Invoke(disp_result, buf, rtype);
+                        this.receiveBuf.Clear();
                     }
                 }
-                else if(rtype == 2)
-                {
-                    byte[] result = Message.getSP6SelfCheckMessage();
-                    this.serialPort1.Write(result, 0, result.Length);
-                }
-                this.Invoke(disp_result, buf, rtype);
             }
             catch(Exception ex)
             {
@@ -191,6 +201,7 @@ namespace SerialPortSend
         }
         private void displayUI(byte[] receive, int rtype)
         {
+            this.label21.Text = BitConverter.ToString(receive);
             if(rtype == 1)
             {
                 if(this.type == 2)
@@ -211,8 +222,17 @@ namespace SerialPortSend
                 }
                 else
                 {
+                    if(receive[1] == 0x01)
+                    {
+                        this.ZYNQLabel.BackColor = Color.Blue;
+                    }
+                    if(receive[2] == 0x00)
+                    {
+                        this.ZYNQLabel.BackColor = Color.Red;
+                    }
                     this.curSPLabel.Text = String.Format("当前更新ZYNQ");
                 }
+                //MessageBox.Show(String.Format("当前帧序号：{0}，一共帧个数：{1}", this.curPos, this.fileData.Count), "提示");
                 this.sendPB.Value = (int)(((this.curPos-1) / (float)this.fileData.Count) * 100);
             }else if(rtype == 2){
                 int version = (int)receive[6];
