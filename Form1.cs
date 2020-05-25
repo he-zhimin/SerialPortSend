@@ -8,12 +8,26 @@ using System.IO.Ports;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using System.Net;
+using System.Net.Sockets;
 using System.Windows.Forms;
+using System.Threading;
 
 namespace SerialPortSend
 {
     public partial class Form1 : Form
     {
+        /// <summary>
+        //默认为网络升级
+        /// </summary>
+        bool bUpdate = true;
+        UdpClient udpClient;
+        IPEndPoint locatePoint;
+
+        IPAddress localIP = IPAddress.Parse("192.168.1.100");
+        IPAddress remoteIP = null;
+        IPEndPoint remotePoint = null;
+        ///
         private delegate void displayResult(byte[] receive, int type);
         private displayResult disp_result;
         private string fileName;
@@ -21,7 +35,7 @@ namespace SerialPortSend
         private bool isContinue = true;
         private DataGridViewTextBoxCell curSP = null;
         public List<byte[]> fileData = new List<byte[]>();
-        private int version = -1;
+        private int version = 0;
         private int type = 1;
         private int startPos = 1;
         private int curPos = 1;
@@ -45,8 +59,86 @@ namespace SerialPortSend
             this.disp_result = new displayResult(displayUI);
             this.spData.RowCount = 8;
             this.spData.ClearSelection();
+            this.comboBox1.SelectedIndex = 0;
+            remoteIP = IPAddress.Parse(this.ipTB.Text);
+
+            ///////////////////////NetWork//////////////
+
+
+            locatePoint = new IPEndPoint(localIP, Convert.ToInt32(this.portTB.Text));
+            remotePoint = new IPEndPoint(remoteIP, Convert.ToInt32(this.portTB.Text));
+            udpClient = new UdpClient(locatePoint);
+
+
+            //监听创建好后，就开始接收信息，并创建一个线程
+            Thread recThread = new Thread(Receive);
+            recThread.IsBackground = true;
+            recThread.Start();
         }
 
+        void Receive()
+        {
+            byte[] rbuf;
+            //远端IP
+            IPEndPoint remotePoint = new IPEndPoint(IPAddress.Any, 0);
+            while (true)
+            {
+                try
+                {
+
+                    rbuf = udpClient.Receive(ref remotePoint);
+                    if (rbuf != null)
+                    {
+                        //string str = System.Text.Encoding.UTF8.GetString(recBuffer, 0, recBuffer.Length);
+
+                        for (int i = 0; i < rbuf.Length; i++)
+                        {
+                            this.receiveBuf.Add(rbuf[i]);
+                            if (this.receiveBuf.Count != 1 && this.receiveBuf[this.receiveBuf.Count - 1] == 0xc0)
+                            {
+                                byte[] buf = this.receiveBuf.ToArray();
+                                int rtype = Message.checkReceiveData(buf);
+                                this.Invoke(disp_result, buf, rtype);
+                                if (rtype == 1)
+                                {
+                                    if (buf[1] == 0x01 || buf[2] == 0x00)
+                                    {
+                                        this.isContinue = false;
+                                    }
+                                    if (this.type == 2)
+                                    {
+                                        sendToSp6();
+                                    }
+                                    else
+                                    {
+                                        sendFileData();
+                                    }
+                                }
+                                else if (rtype == 2)
+                                {
+                                    byte[] result = Message.getSP6SelfCheckMessage();
+                                    udpClient.Send(result, result.Length, remotePoint);
+                                }
+                                this.receiveBuf.Clear();
+                            }
+                        }
+
+                    }
+                }
+                catch (Exception e)
+                {
+                    MessageBox.Show(e.ToString());
+                }
+            }
+
+        }
+
+        void SendData()
+        {
+            byte[] buffer = { 0x30, 0x31 };
+            udpClient.Send(buffer, buffer.Length, remotePoint);
+
+        }
         private void openBtn_Click(object sender, EventArgs e)
         {
             if (!this.serialPort1.IsOpen)
@@ -66,6 +158,7 @@ namespace SerialPortSend
                 {
                     MessageBox.Show("串口打开失败", "警告");
                 }
+                bUpdate = false;
             }
             else
             {
@@ -126,7 +219,15 @@ namespace SerialPortSend
             }else{
                 sendData = Message.getFileMessage(fileData[curPos], this.type, this.version, curSP.RowIndex, curSP.ColumnIndex, curPos + 1);
             }
-            this.serialPort1.Write(sendData, 0, sendData.Length);
+            if (bUpdate)
+            {
+                udpClient.Send(sendData, sendData.Length, remotePoint);
+            }
+            else
+            {
+                this.serialPort1.Write(sendData, 0, sendData.Length);
+            }
+            
             curPos += 1;
         }
 
@@ -137,10 +238,11 @@ namespace SerialPortSend
                 if (spList.Count == 0)
                 {
                     MessageBox.Show("所选SP已经全部更新完成", "提示");
+                    resetFunc();
                     return;
                 }
-                curSP = spList.Dequeue();
-                curPos = startPos;
+                this.curSP = spList.Dequeue();
+                this.curPos = startPos;
                 isContinue = true;
             }
             sendFileData();
@@ -208,7 +310,7 @@ namespace SerialPortSend
                 {
                     if(receive[1] == 0x01)
                     {
-                        this.curSP.Style.BackColor = Color.Blue;
+                        this.curSP.Style.BackColor = Color.SpringGreen;
                     }
                     if(receive[2] == 0x00)
                     {
@@ -224,7 +326,7 @@ namespace SerialPortSend
                 {
                     if(receive[1] == 0x01)
                     {
-                        this.ZYNQLabel.BackColor = Color.Blue;
+                        this.ZYNQLabel.BackColor = Color.SpringGreen;
                     }
                     if(receive[2] == 0x00)
                     {
@@ -237,6 +339,7 @@ namespace SerialPortSend
             }else if(rtype == 2){
                 int version = (int)receive[6];
                 this.ZYNQLabel.Text = parseVersion(version);
+                this.ZYNQLabel.BackColor = Color.Yellow;
             }
             else
             {
@@ -247,10 +350,10 @@ namespace SerialPortSend
                         int versionPos = (i * 8 + j) + 16;
                         int version = (int)receive[versionPos];
                         int colorFlag = (int)receive[8 + i];
-                        Color c = Color.Yellow;
+                        Color c = Color.White;
                         if (colorFlag - 1 < j)
                         {
-                            c = Color.Green;
+                            c = Color.Yellow;
                         }
                         this.spData.Rows[j].Cells[i].Value = parseVersion(version);
                         this.spData.Rows[j].Cells[i].Style.BackColor = c;
@@ -261,13 +364,23 @@ namespace SerialPortSend
 
         private void selfCheckBtn_Click(object sender, EventArgs e)
         {
-            if (!this.serialPort1.IsOpen)
-            {
-                MessageBox.Show("串口未打开", "警告");
-                return;
-            }
+            
             byte[] result = Message.getZYNQSelfCheckMessage();
-            this.serialPort1.Write(result, 0, result.Length);
+            //byte[] result = Message.getSP6SelfCheckMessage();
+            if (bUpdate)
+            {
+                udpClient.Send(result, result.Length, remotePoint);
+            }
+            else
+            {
+                if (!this.serialPort1.IsOpen)
+                {
+                    MessageBox.Show("串口未打开", "警告");
+                    return;
+                }
+                this.serialPort1.Write(result, 0, result.Length);
+            }
+           
         }
 
         private void spData_RowStateChanged(object sender, DataGridViewRowStateChangedEventArgs e)
@@ -339,6 +452,7 @@ namespace SerialPortSend
 
         private void getVersion()
         {
+            /*
             string[] versionArray = this.versionTB.Text.Split('.');
             if(versionArray.Length != 2)
             {
@@ -346,6 +460,7 @@ namespace SerialPortSend
                 return;
             }
             this.version = Int32.Parse(versionArray[0]) * 16 + Int32.Parse(versionArray[1]);
+            */
         }
         private string parseVersion(int ver) {
             string high = (ver / 16).ToString();
@@ -355,10 +470,83 @@ namespace SerialPortSend
 
         private void resetBtn_Click(object sender, EventArgs e)
         {
+            resetFunc();
+        }
+
+        private void resetFunc()
+        {
             this.spList.Clear();
             this.isContinue = true;
             this.curSP = null;
             this.curPos = startPos;
+        }
+
+        private void ParityCB_SelectedIndexChanged(object sender, EventArgs e)
+        {
+
+        }
+
+        private void Label6_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void Label4_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void DataBitCB_SelectedIndexChanged(object sender, EventArgs e)
+        {
+
+        }
+
+        private void Label3_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void Label2_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void BaudRateCB_SelectedIndexChanged(object sender, EventArgs e)
+        {
+
+        }
+
+        private void PortNameCB_SelectedIndexChanged(object sender, EventArgs e)
+        {
+
+        }
+
+        private void Label1_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void Button1_Click(object sender, EventArgs e)
+        {
+            bUpdate = true;
+            //SendData();
+        }
+
+        private void ComboBox1_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            if(comboBox1.SelectedIndex == 0)
+            {
+                this.serialPanel.Visible = false;
+                this.netPanel.Visible = true;
+                bUpdate = true;
+                this.serialPort1.Close();
+            }
+            if(comboBox1.SelectedIndex == 1)
+            {
+                this.serialPanel.Visible = true;
+                this.netPanel.Visible = false;
+                bUpdate = false;
+            }
         }
     }
 }

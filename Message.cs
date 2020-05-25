@@ -27,8 +27,8 @@ namespace SerialPortSend
             byte[] result = new byte[266];
             result[0] = 0xc0;
             result[1] = (byte)type;
-            result[2] = (byte)row;
-            result[3] = (byte)column;
+            result[2] = (byte)column;
+            result[3] = (byte)row;
             result[4] = (byte)version;
             result[5] = 0x00;
             result[6] = (byte)(curPos / 256);
